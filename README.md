@@ -1,8 +1,10 @@
 # mythworld
 
-An **Evennia** prototype where **locations and artifacts remember**. Instead of binary “good/evil” flags or visible reputation meters, player actions leave **memory traces** that **decay at different rates** (personal, group, behavior). The world responds indirectly via **affordances** (navigation friction, encounter bias, spell side-effects, etc.) so consequences feel **mythic and emergent**, not scripted.
+A prototype Evennia world where locations and artifacts have persistent “affinity” memory, not morality meters. Player actions leave traces, those traces decay over time at different rates (personal vs group vs behavior), and the world responds indirectly by modulating affordances, navigation, encounters, and magic side-effects, so consequences feel mythic and emergent rather than scripted.
 
-LLMs are **not** used for chatty NPCs. They’re optional assistants for **summarizing recent world history** and generating **partial, sometimes-wrong folklore** that helps players infer patterns without exposing mechanics.
+LLMs aren’t used for chatty NPCs, they’re used as limited assistants to summarize recent world history and generate partial, sometimes-wrong folklore that helps players infer patterns without ever seeing the underlying mechanics. The end goal is a small playable sandbox that demonstrates “agency without dialogue”: places that remember, objects that pressure, and institutions that drift over long timescales.
+
+An **Evennia** prototype where **locations and artifacts remember**. Instead of binary “good/evil” flags or visible reputation meters, player actions leave **memory traces** that **decay at different rates** (personal, group, behavior). The world responds indirectly via **affordances** (navigation friction, encounter bias, spell side-effects, etc.) so consequences feel **mythic and emergent**, not scripted.
 
 ## Status
 
