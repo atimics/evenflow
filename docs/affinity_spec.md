@@ -1,6 +1,6 @@
 # Affinity Specification
 
-**Version:** 0.2
+**Version:** 0.3
 **Target Platform:** Evennia
 **Purpose:** Define relationship intelligence as emergent world behavior
 
@@ -30,7 +30,7 @@ All world objects fall into four conceptual roles. These are not necessarily dis
 
 | Subtype | Description | Affinity Role |
 |---------|-------------|---------------|
-| Player | Human-controlled character | Primary affinity target; accumulates reputation across entities |
+| Player | Human-controlled character | Primary affinity target; leaves memory traces across entities |
 | NPC | World-controlled agent | Can be affinity source or target; may reference institutional memory |
 | Spirit | Manifested supernatural entity | Rare; typically bound to Location or Artifact |
 
@@ -165,24 +165,49 @@ The system stores **correlations only**. Meaning emerges from each entity's `val
 ```python
 # A forest's values
 forest_valuation = {
-    "extract.hunt": -0.3,      # dislikes hunting
-    "extract.harvest": -0.1,   # mild concern
-    "offer.gift": +0.5,        # appreciates offerings
-    "harm.fire": -0.8,         # hates fire
+    "harm": -0.3,              # dislikes harm generally
+    "harm.fire": -0.8,         # especially hates fire
+    "extract": -0.2,           # mild concern about extraction
+    "extract.hunt": -0.4,      # dislikes hunting specifically
+    "offer": +0.4,             # appreciates offerings generally
+    "offer.gift": +0.5,        # especially likes gifts
     "create.plant": +0.4,      # likes planting
-    "trespass.enter": 0.0,     # neutral on passage
 }
 
 # A frontier town's values
 town_valuation = {
     "extract.hunt": +0.2,      # hunting is trade
-    "trade.fair": +0.3,        # commerce welcome
+    "trade": +0.2,             # commerce welcome generally
+    "trade.fair": +0.3,        # especially fair trade
     "harm.physical": -0.4,     # dislikes violence
     "create.build": +0.3,      # likes construction
 }
 ```
 
-This keeps the model descriptive. The forest remembers "elf used fire here." Whether that's bad depends on the forest's values, not a global ethics table.
+**Valuation lookup with fallback:**
+
+```python
+def get_valuation(profile: Dict[str, float], event_type: str) -> float:
+    """
+    Lookup order:
+    1. Exact match: "harm.fire"
+    2. Category match: "harm" (prefix before first dot)
+    3. Default: 0.0
+    """
+    # Try exact match
+    if event_type in profile:
+        return profile[event_type]
+
+    # Try category match
+    category = event_type.split('.')[0]
+    if category in profile:
+        return profile[category]
+
+    # Default: neutral
+    return 0.0
+```
+
+This keeps the model descriptive. The forest remembers "elf used fire here." Whether that's bad depends on the forest's values, not a global ethics table. Category fallbacks prevent silent 0.0 returns when new event types are added.
 
 **Example event:**
 ```python
@@ -206,13 +231,11 @@ Memory is how entities store and forget events. This creates the "slow drift" th
 
 ### 4.1 Trace Records
 
-A trace is a single correlation stored in an entity's memory.
+A trace is a single correlation stored in an entity's memory. The dict key is the key—`TraceRecord` stores only the accumulated state.
 
 ```python
 @dataclass
 class TraceRecord:
-    key: str                  # actor_id, actor_tag, or event_type depending on channel
-    event_type: str           # What happened (for personal/group channels)
     accumulated: float        # Total weighted intensity
     last_updated: float       # Timestamp of last event
     event_count: int          # How many times
@@ -221,15 +244,17 @@ class TraceRecord:
 
 ### 4.2 Memory Channels
 
-Locations track three parallel memory streams:
+Locations track three parallel memory streams. Each channel uses a different key structure in its dict:
 
-| Channel | Key Structure | Half-Life | Purpose |
-|---------|---------------|-----------|---------|
-| **Personal** | `(actor_id, event_type)` | 7 days | "This one arsonist elf" |
-| **Group** | `(actor_tag, event_type)` | 30 days | "Elves as a category" |
-| **Behavior** | `event_type` | 90 days | "Fire happens here often" |
+| Channel | Dict Type | Key Structure | Half-Life | Purpose |
+|---------|-----------|---------------|-----------|---------|
+| **Personal** | `Dict[Tuple[str, str], TraceRecord]` | `(actor_id, event_type)` | 7 days | "This one arsonist elf" |
+| **Group** | `Dict[Tuple[str, str], TraceRecord]` | `(actor_tag, event_type)` | 30 days | "Elves as a category" |
+| **Behavior** | `Dict[str, TraceRecord]` | `event_type` | 90 days | "Fire happens here often" |
 
 This gives you individual history + group history + place character.
+
+**Key principle:** The dict key carries the identity; `TraceRecord` is just the accumulator. No ambiguity about "what is `trace.key` here?"
 
 ### 4.3 Decay Function
 
@@ -301,48 +326,94 @@ def update_saturation(channel_traces: Dict, base_capacity: int) -> float:
 
 ### 4.6 Computing Affinity Fields
 
-Affinity for an actor is derived from traces across all channels, weighted by the entity's `valuation_profile`:
+Affinity for an actor is derived from traces across all channels, weighted by the entity's `valuation_profile`.
+
+**Channel-specific scoring functions** (explicit about key shapes):
+
+```python
+def score_personal(
+    traces: Dict[Tuple[str, str], TraceRecord],  # (actor_id, event_type) → trace
+    actor_id: str,
+    half_life: float,
+    profile: Dict[str, float]
+) -> float:
+    """Score personal channel. Keys are (actor_id, event_type) tuples."""
+    score = 0.0
+    for (trace_actor_id, event_type), trace in traces.items():
+        if trace_actor_id != actor_id:
+            continue
+        value = get_decayed_value(trace, half_life)
+        valuation = get_valuation(profile, event_type)
+        score += value * valuation
+    return score
+
+
+def score_group(
+    traces: Dict[Tuple[str, str], TraceRecord],  # (actor_tag, event_type) → trace
+    actor_tags: Set[str],
+    half_life: float,
+    profile: Dict[str, float]
+) -> float:
+    """Score group channel. Keys are (actor_tag, event_type) tuples."""
+    score = 0.0
+    for (trace_tag, event_type), trace in traces.items():
+        if trace_tag not in actor_tags:
+            continue
+        value = get_decayed_value(trace, half_life)
+        valuation = get_valuation(profile, event_type)
+        score += value * valuation
+    return score
+
+
+def score_behavior(
+    traces: Dict[str, TraceRecord],  # event_type → trace
+    half_life: float,
+    profile: Dict[str, float]
+) -> float:
+    """Score behavior channel. Keys are event_type strings."""
+    score = 0.0
+    for event_type, trace in traces.items():
+        value = get_decayed_value(trace, half_life)
+        valuation = get_valuation(profile, event_type)
+        score += value * valuation
+    return score
+```
+
+**Main computation:**
 
 ```python
 def compute_affinity(location, actor_id: str, actor_tags: Set[str]) -> float:
     """
     Blend personal, group, and behavior channels.
-    Valuation comes from the location, not a global table.
+    Half-lives come from config, not from traces.
+    Valuation comes from the location's profile.
     """
-    W_PERSONAL = 0.5   # individual history dominates short-term
-    W_GROUP = 0.35     # group history dominates long-term
-    W_BEHAVIOR = 0.15  # general place character
+    config = get_config()
+    profile = location.valuation_profile
 
-    def channel_score(traces: Dict, key_filter) -> float:
-        score = 0.0
-        for key, trace in traces.items():
-            if not key_filter(key):
-                continue
-            value = get_decayed_value(trace, get_half_life(trace))
-            valuation = location.valuation_profile.get(trace.event_type, 0.0)
-            score += value * valuation
-        return score
-
-    # Personal: this specific actor
-    personal = channel_score(
+    personal = score_personal(
         location.personal_traces,
-        lambda k: k[0] == actor_id
+        actor_id,
+        config.half_lives.location.personal,
+        profile
     )
 
-    # Group: any of actor's tags
-    group = channel_score(
+    group = score_group(
         location.group_traces,
-        lambda k: k[0] in actor_tags
+        actor_tags,
+        config.half_lives.location.group,
+        profile
     )
 
-    # Behavior: general event patterns (no actor filter)
-    behavior = channel_score(
+    behavior = score_behavior(
         location.behavior_traces,
-        lambda k: True
+        config.half_lives.location.behavior,
+        profile
     )
 
-    raw = W_PERSONAL * personal + W_GROUP * group + W_BEHAVIOR * behavior
-    return math.tanh(raw / AFFINITY_SCALE)
+    W = config.channel_weights
+    raw = W.personal * personal + W.group * group + W.behavior * behavior
+    return math.tanh(raw / config.affinity_scale)
 ```
 
 ### 4.7 Memory Compaction
@@ -365,9 +436,26 @@ class ScarEvent:
     half_life_days: float = 365.0  # scars last years
 ```
 
+**Folding rules** (how keys collapse during compaction):
+
+```python
+# Tag folding: which actor_tags survive warm rollup
+# Configurable per-world; typically race/faction only
+INSTITUTIONAL_TAGS = {"human", "elf", "dwarf", "orc", "imperial", "rebel"}
+
+def fold_actor_tag(tag: str) -> Optional[str]:
+    """Return tag if institutional, else None (discard)."""
+    return tag if tag in INSTITUTIONAL_TAGS else None
+
+# Category folding: event_type → event_category
+def fold_event_type(event_type: str) -> str:
+    """Extract category prefix: 'harm.fire' → 'harm'"""
+    return event_type.split('.')[0]
+```
+
 **Compaction rules:**
 
-1. **Hot → Warm:** After 7 days, traces are merged into EMAs keyed by `(actor_tag_category, event_category)`. Individual actor_ids forgotten.
+1. **Hot → Warm:** After 7 days, personal traces are discarded (individual IDs forgotten). Group traces are merged into EMAs keyed by `(folded_tag, event_category)`. Only institutional tags survive; others aggregate into a catch-all.
 
 2. **Warm → Scar:** After 90 days, only events with `intensity > 0.7` become scars. Everything else decays to zero and is deleted.
 
@@ -414,6 +502,8 @@ class MoodBand:
     last_updated: float
 ```
 
+**Critical invariant:** Mood bands are **derived caches, disposable, never authoritative**. They can be deleted and recomputed from traces at any time. Never write mood band state back into the trace system—that creates feedback loops and drift.
+
 ### 4.9 Affinity Threshold Behaviors
 
 Affinity values (per actor) range from -1.0 (hostile) to +1.0 (welcoming). Thresholds trigger affordance changes:
@@ -432,29 +522,31 @@ Affinity values (per actor) range from -1.0 (hostile) to +1.0 (welcoming). Thres
 
 Affordances are the behavioral outputs of affinity. They modulate what happens, never what is said.
 
+**Mechanical handle requirement:** Each affordance must define what in-game variable it touches, or be explicitly marked "flavor only." This prevents implementation from inventing hidden RPG stats.
+
 ### 5.1 Location Affordances
 
-| Affordance | Hostile Effect | Favorable Effect | Cooldown | Severity Clamp |
-|------------|----------------|------------------|----------|----------------|
-| **Pathing** | Paths twist; travel takes longer | Shortcuts appear; travel is swift | 1 hour | +50% / -30% travel time |
-| **Encounter Rate** | Dangerous creatures more frequent | Peaceful creatures; threats avoid | 30 min | 2x / 0.5x base rate |
-| **Spell Efficacy** | Spells misfire, reduced power | Spells amplified, unexpected success | Per spell | ±25% power |
-| **Resource Yield** | Harvests poor, veins barren | Bounty appears, hidden caches | 2 hours | ±40% yield |
-| **Rest Quality** | Sleep disturbed, healing slowed | Deep rest, bonus recovery | 8 hours | ±30% healing |
-| **Navigation** | Landmarks hidden, disorientation | Clear signs, intuitive direction | 1 hour | Flavor only |
-| **Weather (local)** | Harsh micro-weather | Sheltering conditions | 4 hours | Flavor + minor damage |
-| **Animal Behavior** | Wildlife flees or attacks | Wildlife approaches, aids | 2 hours | Aggro radius ±50% |
+| Affordance | Hostile Effect | Favorable Effect | Cooldown | Severity Clamp | Mechanical Handle |
+|------------|----------------|------------------|----------|----------------|-------------------|
+| **Pathing** | Paths twist; travel takes longer | Shortcuts appear; travel is swift | 1 hour | +50% / -30% travel time | `room.travel_time_modifier` |
+| **Encounter Rate** | Dangerous creatures more frequent | Peaceful creatures; threats avoid | 30 min | 2x / 0.5x base rate | `room.encounter_rate_modifier` |
+| **Spell Efficacy** | Spells misfire, reduced power | Spells amplified, unexpected success | Per spell | ±25% power | `spell.power_modifier` |
+| **Resource Yield** | Harvests poor, veins barren | Bounty appears, hidden caches | 2 hours | ±40% yield | `harvest.yield_modifier` |
+| **Rest Quality** | Sleep disturbed, healing slowed | Deep rest, bonus recovery | 8 hours | ±30% healing | `rest.healing_modifier` |
+| **Navigation** | Landmarks hidden, disorientation | Clear signs, intuitive direction | 1 hour | — | Flavor only |
+| **Weather (local)** | Harsh micro-weather | Sheltering conditions | 4 hours | — | Flavor only |
+| **Animal Behavior** | Wildlife flees or attacks | Wildlife approaches, aids | 2 hours | Aggro radius ±50% | `npc.aggro_radius_modifier` |
 
 ### 5.2 Artifact Affordances (Pressure Vectors)
 
-| Pressure Type | Mechanism | Example | Cooldown | Severity Clamp |
-|---------------|-----------|---------|----------|----------------|
-| **Desire Amplification** | Increases existing wants | Ring makes power-hunger sharper | 1 hour | +30% motivation |
-| **Fatigue Timing** | Exhaustion at critical moments | Bearer tires when trying to discard | 4 hours | -20% stamina |
-| **Coincidence Bias** | Nudges random outcomes | "Lucky" finds that serve artifact's origin | 1 hour | ±15% luck |
-| **Skill Modulation** | Easier/harder by alignment | Elven blade flows for elves, resists orcs | Per action | ±20% skill |
-| **Perception Filter** | Notice more/less by category | Cursed gold makes other wealth invisible | 30 min | Flavor + hints |
-| **Dependency Curve** | Withdrawal when separated | Discomfort grows with distance | Continuous | -25% stats at range |
+| Pressure Type | Mechanism | Example | Cooldown | Severity Clamp | Mechanical Handle |
+|---------------|-----------|---------|----------|----------------|-------------------|
+| **Desire Amplification** | Increases existing wants | Ring makes power-hunger sharper | 1 hour | +30% | Flavor only (narrative) |
+| **Fatigue Timing** | Exhaustion at critical moments | Bearer tires when trying to discard | 4 hours | -20% stamina | `actor.stamina_modifier` |
+| **Coincidence Bias** | Nudges random outcomes | "Lucky" finds that serve artifact's origin | 1 hour | ±15% | `actor.luck_modifier` |
+| **Skill Modulation** | Easier/harder by alignment | Elven blade flows for elves, resists orcs | Per action | ±20% | `action.skill_modifier` |
+| **Perception Filter** | Notice more/less by category | Cursed gold makes other wealth invisible | 30 min | — | Flavor only (description) |
+| **Dependency Curve** | Withdrawal when separated | Discomfort grows with distance | Continuous | -25% | `actor.stat_modifier` (all) |
 
 **Pressure rules** are defined per artifact:
 
@@ -586,7 +678,17 @@ class TraceContribution:
 - `affinity/inspect <location>` — Show current affinity toward caller, top traces
 - `affinity/history <location> [hours]` — Recent affordance triggers
 - `affinity/why <location> <actor>` — Explain top contributing factors
-- `affinity/replay <trigger_id>` — Recompute a trigger with current state for debugging
+- `affinity/replay <trigger_id>` — Replay using logged snapshot to verify determinism
+- `affinity/reeval <location> <actor>` — Recompute using current state for tuning
+
+**Replay vs Re-eval distinction:**
+
+| Command | Input State | Purpose |
+|---------|-------------|---------|
+| `replay` | Snapshot from `AffordanceTriggerLog` | "Did we compute this correctly at the time?" |
+| `reeval` | Current live traces | "What would happen if this actor entered now?" |
+
+`replay` verifies determinism; `reeval` supports tuning.
 
 **Principle:** Admins can always answer "why did that happen?" without exposing it to players.
 
@@ -776,7 +878,7 @@ AffordanceTrigger: pathing/slow
 | Term | Definition |
 |------|------------|
 | **Affinity** | Accumulated relational memory; how an entity feels about an actor |
-| **Trace** | A stored correlation: (key, event_type) → accumulated value |
+| **Trace** | A stored correlation: dict key → `TraceRecord` (accumulated value) |
 | **Channel** | Memory stream: personal (individual), group (category), behavior (general) |
 | **Decay** | Exponential memory fade over time |
 | **Saturation** | Per-channel memory fullness; limits new accumulation |
