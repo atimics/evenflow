@@ -1,0 +1,32 @@
+# Evenflow MCP Server - AWS Deployment Configuration
+
+# Build settings
+version = 0.1
+[default.build.parameters]
+use_container = false
+parallel = true
+
+# Default deployment settings
+[default.deploy.parameters]
+stack_name = "evenflow-mcp"
+resolve_s3 = true
+s3_prefix = "evenflow-mcp"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+
+# Dev environment
+[dev.deploy.parameters]
+stack_name = "evenflow-mcp-dev"
+parameter_overrides = "Environment=dev DatabaseUrl="
+
+# Staging environment
+[staging.deploy.parameters]
+stack_name = "evenflow-mcp-staging"
+parameter_overrides = "Environment=staging"
+
+# Production environment
+[prod.deploy.parameters]
+stack_name = "evenflow-mcp-prod"
+parameter_overrides = "Environment=prod"
+confirm_changeset = true

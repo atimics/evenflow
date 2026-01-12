@@ -1,0 +1,20 @@
+# Core dependencies for Evenflow MUD server
+# Install with: pip install -r requirements.txt
+
+# Evennia MUD framework
+evennia>=3.0.0
+
+# YAML parsing for configuration files
+PyYAML>=6.0
+
+# MCP (Model Context Protocol) for LLM integration
+mcp>=1.0.0
+
+# HTTP client for MCP SSE transport
+httpx>=0.25.0
+
+# Async support
+anyio>=4.0.0
+
+# Data validation (optional)
+pydantic>=2.0.0

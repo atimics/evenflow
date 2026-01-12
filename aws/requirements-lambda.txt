@@ -1,0 +1,14 @@
+# Lambda-specific dependencies for Evenflow MCP server
+# Install with: pip install -t ./package -r requirements-lambda.txt
+
+# MCP SDK
+mcp>=1.0.0
+
+# YAML parsing for location files
+PyYAML>=6.0
+
+# Database connectivity (optional, for RDS mode)
+# psycopg2-binary>=2.9.0
+
+# Note: Keep this minimal for faster cold starts
+# Avoid heavy dependencies like pandas, numpy unless essential

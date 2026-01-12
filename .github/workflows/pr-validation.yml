@@ -1,0 +1,66 @@
+# Evenflow MCP Server - Pull Request Validation
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  validate:
+    name: Validate PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r aws/requirements-lambda.txt
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short --cov=mcp --cov=world --cov-report=term-missing
+
+      - name: Type check (optional)
+        continue-on-error: true
+        run: |
+          pip install mypy
+          mypy mcp/ --ignore-missing-imports || true
+
+      - name: Validate SAM template
+        working-directory: aws
+        run: |
+          pip install aws-sam-cli
+          sam validate --lint
+
+      - name: Test MCP server creation
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from mcp.server import create_server
+          from mcp.world_adapter import EvenflowAdapter
+          
+          # Test adapter initialization
+          adapter = EvenflowAdapter()
+          locations = adapter.list_locations()
+          print(f'Loaded {len(locations)} locations: {locations}')
+          
+          # Test server creation
+          server = create_server()
+          print(f'Server created: {server}')
+          print('✅ All MCP components validated')
+          "

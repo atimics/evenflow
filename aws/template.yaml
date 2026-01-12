@@ -1,0 +1,117 @@
+# AWS SAM template for Evenflow MCP server
+# Deploy with: sam build && sam deploy --guided
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Evenflow MCP Server - Model Context Protocol host for MUD game state
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+
+  DatabaseUrl:
+    Type: String
+    Default: ""
+    Description: PostgreSQL connection URL (leave empty for in-memory mode)
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: python3.11
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        DATABASE_URL: !Ref DatabaseUrl
+
+Resources:
+  # Lambda Function
+  EvenflowMCPFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub evenflow-mcp-${Environment}
+      Handler: lambda_handler.lambda_handler
+      CodeUri: .
+      Description: MCP server for Evenflow MUD world state
+      Architectures:
+        - x86_64
+      Events:
+        McpApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref McpApi
+            Path: /mcp
+            Method: POST
+        McpApiOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref McpApi
+            Path: /mcp
+            Method: OPTIONS
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: '*'
+
+  # API Gateway
+  McpApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub evenflow-mcp-api-${Environment}
+      StageName: !Ref Environment
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowMethods: "'POST,OPTIONS'"
+
+  # CloudWatch Log Group
+  EvenflowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/evenflow-mcp-${Environment}
+      RetentionInDays: 14
+
+  # Cost Alert
+  CostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub evenflow-mcp-cost-alert-${Environment}
+      AlarmDescription: Alert when Lambda invocations exceed expected usage
+      MetricName: Invocations
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EvenflowMCPFunction
+      Statistic: Sum
+      Period: 86400  # 1 day
+      EvaluationPeriods: 1
+      Threshold: 10000  # Alert at 10k invocations/day
+      ComparisonOperator: GreaterThanThreshold
+
+Outputs:
+  McpApiUrl:
+    Description: API Gateway endpoint URL for MCP server
+    Value: !Sub https://${McpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/mcp
+    Export:
+      Name: !Sub ${AWS::StackName}-McpApiUrl
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt EvenflowMCPFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FunctionArn
+
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref EvenflowMCPFunction

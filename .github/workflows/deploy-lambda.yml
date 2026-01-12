@@ -1,0 +1,154 @@
+# Evenflow MCP Server - GitHub Actions CI/CD
+# Deploys to AWS Lambda on push to main
+
+name: Deploy MCP Server
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mcp/**'
+      - 'world/**'
+      - 'aws/**'
+      - '.github/workflows/deploy-lambda.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'mcp/**'
+      - 'world/**'
+      - 'aws/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r aws/requirements-lambda.txt
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+      - name: Test MCP imports
+        run: |
+          python -c "from mcp.server import create_server; print('MCP server imports OK')"
+          python -c "from mcp.world_adapter import EvenflowAdapter; print('World adapter imports OK')"
+
+  deploy:
+    name: Deploy to AWS
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install AWS SAM CLI
+        run: |
+          pip install aws-sam-cli
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Package application
+        working-directory: aws
+        run: |
+          # Create package directory with all required modules
+          mkdir -p package
+          cp -r ../mcp package/
+          cp -r ../world package/
+          cp lambda_handler.py package/
+          
+          # Install Lambda dependencies
+          pip install -t package -r requirements-lambda.txt
+          
+          # SAM build
+          sam build --use-container=false
+
+      - name: Deploy to AWS
+        working-directory: aws
+        run: |
+          sam deploy \
+            --config-env ${{ steps.env.outputs.environment }} \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset
+
+      - name: Get deployment outputs
+        id: outputs
+        working-directory: aws
+        run: |
+          STACK_NAME="evenflow-mcp-${{ steps.env.outputs.environment }}"
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`McpApiUrl`].OutputValue' \
+            --output text)
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "### 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke test
+        run: |
+          # Test the deployed endpoint
+          API_URL="${{ steps.outputs.outputs.api_url }}"
+          if [ -n "$API_URL" ]; then
+            echo "Testing $API_URL..."
+            curl -s -X POST "$API_URL" \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc": "2.0", "method": "initialize", "id": 1}' \
+              | jq .
+          fi

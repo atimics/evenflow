@@ -1,9 +1,20 @@
 # Development dependencies for evenflow
 # Install with: pip install -r requirements-dev.txt
 
+# Core requirements
+-r requirements.txt
+
 # Testing
 pytest>=7.0.0
 pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
 
 # Type checking (optional)
 mypy>=1.0.0
+types-PyYAML>=6.0.0
+
+# AWS SAM CLI for local Lambda testing
+aws-sam-cli>=1.100.0
+
+# Linting
+ruff>=0.1.0
