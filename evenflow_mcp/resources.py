@@ -8,8 +8,8 @@ LLM clients can subscribe to resources for updates.
 from typing import Any, Dict
 from mcp.server.fastmcp import FastMCP
 
-from mcp.schemas import LocationQuery, to_dict
-from mcp.world_adapter import get_adapter
+from evenflow_mcp.schemas import LocationQuery, to_dict
+from evenflow_mcp.world_adapter import get_adapter
 
 
 def register_resources(mcp: FastMCP) -> None:

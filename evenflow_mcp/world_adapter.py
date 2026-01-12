@@ -35,7 +35,7 @@ from world.affinity.affordances import (
     is_affordance_enabled,
 )
 
-from mcp.schemas import (
+from evenflow_mcp.schemas import (
     LocationState,
     LocationQuery,
     TraceInfo,

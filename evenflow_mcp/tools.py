@@ -8,14 +8,14 @@ Tools provide read and analysis capabilities for the game world.
 from typing import Any, Dict, List, Optional
 from mcp.server.fastmcp import FastMCP
 
-from mcp.schemas import (
+from evenflow_mcp.schemas import (
     LocationQuery,
     TraceQuery,
     ActionPrediction,
     DecayChannel,
     to_dict,
 )
-from mcp.world_adapter import get_adapter
+from evenflow_mcp.world_adapter import get_adapter
 
 
 def register_tools(mcp: FastMCP) -> None:

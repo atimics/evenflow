@@ -26,8 +26,8 @@ if project_root not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp.tools import register_tools
-from mcp.resources import register_resources
+from evenflow_mcp.tools import register_tools
+from evenflow_mcp.resources import register_resources
 
 
 def create_server(name: str = "evenflow-mcp") -> FastMCP:
@@ -42,7 +42,7 @@ def create_server(name: str = "evenflow-mcp") -> FastMCP:
     """
     mcp = FastMCP(
         name=name,
-        version="0.1.0",
+        instructions="Evenflow MUD server exposing affinity system via MCP. Query world state, analyze mechanics, and explore the game world.",
     )
     
     # Register tools and resources
@@ -75,7 +75,10 @@ def run_server(
         raise ValueError(f"Unknown transport: {transport}")
 
 
+# Global server instance for mcp dev command
+mcp = create_server()
+
+
 # Entry point for direct execution
 if __name__ == "__main__":
-    server = create_server()
-    run_server(server)
+    run_server(mcp)
